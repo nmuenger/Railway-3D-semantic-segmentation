@@ -1,0 +1,29 @@
+model_path: /workspaces/baseline/exp/milestone_runs/26_07_2024 #The folder directory where there must be "config.py" and "model/model_best.pth"
+#model_path: /workspaces/baseline/exp/milestone_runs/1_07_2024
+data_path: /workspaces/baseline/exp/SIEMENS_DATA
+run_all_val_set: False # If True, will run inference on each frame of the validation set. Else, it only runs on frame specifically defined in "evaluated_frames"
+val_set: ["2_station_berliner_tor_2.1","3_fire_site_3.4","4_station_pedestrian_bridge_4.2","4_station_pedestrian_bridge_4.5","6_station_klein_flottbek_6.1","7_approach_underground_station_7.2","9_station_ruebenkamp_9.3","9_station_ruebenkamp_9.4","9_station_ruebenkamp_9.5","9_station_ruebenkamp_9.7","11_main_station_11.1","14_signals_station_14.2","14_signals_station_14.3","18_vegetation_switch_18.1","21_station_wedel_21.3"]
+
+evaluated_frames: ["000000.pcd"]
+#evaluated_frames: [ "18_vegetation_switch_18.1/lidar/076_1631625168.734538000.pcd" ]
+# evaluated_frames: [ "11_main_station_11.1/lidar/276_1631531579.699811000.pcd",
+#                     "18_vegetation_switch_18.1/lidar/076_1631625168.734538000.pcd",
+#                     "7_approach_underground_station_7.2/lidar/673_1631705207.399811000.pcd",
+#                    "2_station_berliner_tor_2.1/lidar/250_1631531385.099957000.pcd",
+#                       "14_signals_station_14.2/lidar/017_1631450163.799963000.pcd"]
+use_preprocessed: False
+
+export_las_file: True # If set to true, will export the infered pcd under "out_path"
+
+# General directory for where exported file will be stored.
+out_path: "/workspaces/baseline/exp/inference_siemens_data" #"/workspaces/baseline/exp"
+
+save_error_map: False
+save_confusion_matrix: False
+save_pose_stat: False
+export_projected_pcd: False
+save_stat_metric: False
+
+
+# Meant to be used only once, to create the GT map of semantic point location in training split
+save_gt_map: False

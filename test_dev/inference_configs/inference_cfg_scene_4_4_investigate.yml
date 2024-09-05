@@ -1,0 +1,29 @@
+weight_path: "/workspaces/baseline/exp/weights_sweeps_training/ONline_paste_exp_0/prob_paste_0.0/model/model_last.pth" #WEIGHT BASELINE 13_08
+
+# weight_path: /workspaces/baseline/exp/weights_sweeps_training/ONline_paste_exp_0/prob_paste_0.8/model/model_last.pth
+
+config_path: /workspaces/baseline/configs/osdar23/OSDaR23_experiment.py #EBUG_OSDaR23.py
+data_path: /workspaces/baseline/data/OSDaR_dataset/v_2
+
+normalize_intensity: True
+
+run_all_val_set: True # If True, will run inference on each frame of the validation set. Else, it only runs on frame specifically defined in "evaluated_frames"
+val_set: ["4_station_pedestrian_bridge_4.4"]
+
+# evaluated_frames: ["4_station_pedestrian_bridge_4.4/lidar/199_1631704353.999993000.pcd"]
+
+use_preprocessed: False
+
+export_las_file: False # If set to true, will export the infered pcd under "out_path"
+
+# General directory for where exported file will be stored.
+out_path: "/workspaces/baseline/exp/scene_4_4_investigation/model_p0" #"/workspaces/baseline/exp"
+
+save_error_map: False
+save_confusion_matrix: False
+save_pose_stat: False
+export_projected_pcd: True
+save_stat_metric: False
+
+# Meant to be used only once, to create the GT map of semantic point location in training split
+save_gt_map: False
