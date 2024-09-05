@@ -1,6 +1,7 @@
 ### 3D Semantic Segmentation of Objects in the Railway Context
 
-The repository stores the scripts for the model and data augmentations used in the the Master's project *3D Semantic Segmentation of Objects in the Railway Context*.  Note that the code has not yet been cleaned. It will be done in the coming days.
+This repository contains the scripts for model implementation and data augmentation utilized in the Master’s project *3D Semantic Segmentation of Objects in the Railway Context*. Please note that the code is currently in its raw form and has not yet been cleaned. This will be adressed in the coming days.
+
 
 <p align="center">
     <img src="https://github.com/nmuenger/Railway-3D-semantic-segmentation/blob/master/Inference_train_station.jpeg" alt="trainstation" width="500"/>
