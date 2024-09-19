@@ -1,26 +1,30 @@
 _base_ = ["../_base_/default_runtime.py"]
 
 # ---- misc custom setting ----------------
-sweep=False
-normalize_intensity=True
+sweep = False # If set to true, run a Weight and Biases sweep. In that case, adjustement must be made in train.py
+normalize_intensity = True
 batch_size = 2 # bs: total bs in all gpus
 mix_prob = 0. # From what I understand, some of the point cloud in a batch can be "mixed" given this probability (https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=9665916)
 empty_cache = True
 enable_amp = True
 num_worker = 6
 seed = 42
-ignore_index = -1
-specific_osdar23_sampler=False
-augment_dataset_size = 1 # How many time to iterate through the whole dataset for one epoch
+ignore_index = -1 # Classes mapped to ignore_index are not taken into account for loss computation
 augmented_sampler = dict(active = True,
-                         augmentations_list = [#dict(type=["PolarMixPaste"], augment_ratio=0.), # If there are 100 samples, with one augm. with augment_ratio=0.4 -> 140 samples
-                                               #dict(type="Sparsify", augment_ratio=0.0, start_epoch=25)
+                         augmentations_list = [#dict(type=["PolarMixPaste"], augment_ratio=0.5), # If there are 100 samples, with one augm. with augment_ratio=0.4 -> 140 samples
+                                               #dict(type="Sparsify", augment_ratio=0.0)
                                                ])
-csv_person_presence_path="railseg/csv_stats/person_frames.csv"
+csv_person_presence_path="misc/csv_stats/person_frames.csv"
 
-# ---- Custom param for railseg --------------------------
+# ---- Weights and Biases upload specific-----------------
+# To upload some point cloud for visualisation to WandB. The point clouds to upload can be changed in 
+# pointcept/engines/hooks/evaluator.py
 pcd_to_wandb = True # If set to true, point cloud segmentation prediction will be uploaded to WandB
 upload_pcd_every_x_epoch = 10 # The pcd will be uploaded every x epoch
+
+# ---- dataset settings ------------------------------------
+dataset_type = "OSDaR23Dataset"
+data_root = "data/OSDaR23_dataset_preprocessed"
 
 # ---- Split to Seq. -------------------------------------
 split2seq = dict(
@@ -41,7 +45,7 @@ evaluated_class = [0, #background
                     6, #signal
                     7] #buffer stop
 
-# This attribute is for annotation which should actas if they don't actually exist, and not be actively mapped to background.
+# This attribute is for annotation which should act as if they don't actually exist, and not be actively mapped to background.
 # It is mainly for the case of switch, which are supperposed with track annotation. If we map those to track, then
 # the shape of the segmentation is not as precise, but if we map them to background, then possibility that there is a "hole" in that place in the track.
 annotation_disregarded = -2 
@@ -73,7 +77,6 @@ learning_map = {
         }
 
 learning_map_inv = {
-            #ignore_index: ignore_index,  # "unlabeled"
             0 : 'background',
             1 : 'person',
             2 : 'train' ,       
@@ -84,7 +87,7 @@ learning_map_inv = {
             7 : 'buffer_stop',
         }
 
-color_map = {#ignore_index:[211, 211, 211],
+color_map = {
             0:[211, 211, 211],
             1: [255, 0, 0],  # Person -> Red
             2: [255, 215, 0],# Train -> Yellow
@@ -165,9 +168,7 @@ scheduler = dict(
 )
 param_dicts = [dict(keyword="block", lr=0.0001)]
 
-# ---- dataset settings ------------------------------------
-dataset_type = "OSDaR23Dataset"
-data_root = "/workspaces/baseline/exp/preprocessed_pcd"
+
 
 # ---- DATA PARAM -----------------------------------------
 data = dict(
@@ -187,8 +188,7 @@ data = dict(
         split="train",
         data_root=data_root,
         transform=[
-            #dict(type="PolarMixSwap", p=0.5),
-            dict(type="PolarMixPaste", p=0.8, csv_stat_path="/workspaces/baseline/railseg/csv_stats/pedestrian_density_per_distance.csv"),
+            dict(type="PolarMixPaste", p=0.8, csv_stat_path="misc/csv_stats/pedestrian_density_per_distance.csv",),
             dict(type="RandomRotate", angle=[-1/12, 1/12], axis="z", center=[0, 0, 0], p=0.5), # The angle is multiplied by pi
            
             dict(type="RandomScale", scale=[0.9, 1.1]),
@@ -205,9 +205,8 @@ data = dict(
                 return_grid_coord=True,
             ),
 
-            dict(type="Sparsify", end_range=50, track_label=learning_map["track"], p=0.9), # start_range = lower bound of 10 meter section 
-            #dict(type="SparsifyTrackIgnore", end_range=80, track_label=learning_map["track"], p=1),
-
+            dict(type="Sparsify", end_range=50, track_label=learning_map["track"], p=0.9),
+           
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -337,3 +336,5 @@ hooks = [
     dict(type="SuccessfulPastingCounter"),
     # dict(type="PreciseEvaluator", test_last=False),
 ]
+
+eval_only = False # If set to true, will not go through training step, only inference

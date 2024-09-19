@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 import pointops
 import wandb
-from railseg import pcd_processing
+from misc import pcd_processing
 from uuid import uuid4
 from pointcept.engines.metric_logger import update_distancewise_metric, log_metric
 
@@ -185,11 +185,10 @@ class SemSegEvaluator(HookBase):
         loss_avg = self.trainer.storage.history("val_loss").avg   
         self.trainer.writer.log({"epoch": current_epoch, "val/loss": loss_avg})
         
-        # TODO PUT HERE METRIC save functiion: 
         m_iou = log_metric(self.trainer.cfg, self.trainer.storage, self.trainer.logger, self.trainer.writer, current_epoch)
         
         # If we only run the validation script, self.trainer.storage.history("train_intersection") will not exist..
-        try:  #TODO Create hooks for only uploading train metric to avoid this
+        try:  
             # Upload also the mIoU for the training set
             train_intersection = self.trainer.storage.history("train_intersection").total
             train_union = self.trainer.storage.history("train_union").total

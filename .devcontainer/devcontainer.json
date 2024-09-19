@@ -18,16 +18,19 @@
 	// },
 
 	// To build on image with vscoe remoteUser
-	"image": "vsc-baseline-def426a02b06076b476a9145e4b7cd46316ff90c5d41067970a8e0ff2a5d8b3e", // "baseline_non_root_user",
+	"image": "vsc-baseline-def426a02b06076b476a9145e4b7cd46316ff90c5d41067970a8e0ff2a5d8b3e", 
 	// "remoteUser": "vscode",
 		
 	"mounts": [
 		"source=/mnt/Drive/HDD1/datasets/semanticKITTI,target=/workspaces/baseline/data/semantic_kitti,readonly,type=bind,consistency=cached",
-		"source=/mnt/Drive/HDD1/datasets/osdar23,target=/workspaces/baseline/data/OSDaR_dataset,readonly,type=bind,consistency=cached",
+		"source=/mnt/Drive/HDD1/datasets/osdar23/v_2,target=/workspaces/baseline/data/OSDaR23_dataset,readonly,type=bind,consistency=cached",
+		"source=/mnt/Drive/HDD1/datasets/osdar23/preprocessed_pcd,target=/workspaces/baseline/data/OSDaR23_dataset_preprocessed,readonly,type=bind,consistency=cached",
 		"source=/mnt/Drive/HDD1/datasets/nuscenes,target=/workspaces/baseline/data/nuscenes/raw,readonly,type=bind,consistency=cached",
 		
 		"source=/home/nico/data/nuscenes/info,target=/workspaces/baseline/data/nuscenes/info,readonly,type=bind,consistency=cached",
 		
+		"source=/mnt/Drive/HDD1/labeled_safetrain_data/MVP1.1,target=/workspaces/baseline/data/SIEMENS,readonly,type=bind,consistency=cached",
+
 		// For exporting data
 		"source=/mnt/Drive/HDD1/nico_export,target=/workspaces/baseline/exp,type=bind,consistency=cached"
 	  ],

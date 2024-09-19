@@ -13,7 +13,7 @@ import raillabel
 from copy import deepcopy
 from pathlib import Path
 from torch.utils.data import Sampler
-from railseg.pcd_processing import normalize_multisensor_intensity
+from misc.pcd_processing import normalize_multisensor_intensity
 import random
 import copy
 import pandas as pd
@@ -21,23 +21,17 @@ import pandas as pd
 from .builder import DATASETS
 from .defaults import DefaultDataset
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
+class bcolors: # Used to colorize text in warning
     OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
     WARNING = '\033[93m'
-    FAIL = '\033[91m'
     ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
 
 @DATASETS.register_module()
 class OSDaR23Dataset(DefaultDataset):
     def __init__(
         self,
         split="train",
-        data_root="data/OSDaR_dataset",
+        data_root="data/OSDaR23_dataset_preprocessed",
         transform=None,
         test_mode=False,
         test_cfg=None,
@@ -55,7 +49,7 @@ class OSDaR23Dataset(DefaultDataset):
         use_preprocessed = True,
         return_track_poly3d = False,
         pose_dict = {"upright":0, "sitting":1, "lying":2, "other":3},
-        csv_person_presence_path = "railseg/csv_stats/person_frames.csv",
+        csv_person_presence_path = "misc/csv_stats/person_frames.csv",
         normalize_intensity = None
     ):
         self.ignore_index = ignore_index
@@ -93,9 +87,6 @@ class OSDaR23Dataset(DefaultDataset):
             
         return person_data_idx
 
-
-        
-
     def get_data_list(self):
         split2seq = self.split2seq
 
@@ -126,11 +117,19 @@ class OSDaR23Dataset(DefaultDataset):
         return data_list
     
     # --- UNprocessed ---
-    def get_data_unprocessed(self, idx): 
+    def get_data_unprocessed(self, idx=None, pcd_dir=None): 
         # idx is the index in the data_list that we want to retrieve. Note that if the eval is not run every epoch
         # this step is performed multiple time for a "single" frame and idx is therefore larger than len(self.data_list)
+    
+        if idx is not None:
+            if pcd_dir is not None:
+                raise ValueError("Only 'idx' or 'pcd_dir' should be provided, not both.")
+            data_path = Path(self.data_list[idx % len(self.data_list)])
+        elif pcd_dir is not None:
+            data_path = pcd_dir
+        else:
+            raise ValueError("Both 'idx' and 'pcd_dir' cannot be None. One must be provided.")
         
-        data_path = Path(self.data_list[idx % len(self.data_list)])
         with open(data_path, "r") as b:
             scan = np.loadtxt(b, skiprows=11, usecols=(0,1,2,3,5)) # -> x|y|z|intensity|sensor_id
         
@@ -152,7 +151,7 @@ class OSDaR23Dataset(DefaultDataset):
         segment_person_status = np.full(len(scan), -1) # Only adding pose attribute if the point is of type "person", else: -1
         
         if os.path.exists(label_file):
-            scene = raillabel.load(label_file) # Load json annotations for scene
+            scene = raillabel.load(str(label_file)) # Load json annotations for scene
             frame_nb = int(data_path.name.split('_')[0]) # returns the frame number as int '037'-> 37 
             scene_filtered = raillabel.filter(scene, include_frames=[frame_nb], include_annotation_types=['seg3d'])
             
@@ -176,28 +175,13 @@ class OSDaR23Dataset(DefaultDataset):
             else:
                 pass # Keep all points of the point cloud as ignore_index
             
-            if self.return_track_poly3d:
-                poly3d_filtered = raillabel.filter(scene, include_frames=[frame_nb], include_annotation_types=['poly3d'])
-                dict_track = {}
-
-                for annotation in poly3d_filtered.frames[frame_nb].annotations.keys():
-                    track_name = poly3d_filtered.frames[frame_nb].annotations[annotation].object.name
-                    if track_name not in dict_track:
-                        dict_track[track_name] = {}
-                    rail_side = poly3d_filtered.frames[frame_nb].annotations[annotation].attributes["railSide"]
-                    dict_track[track_name][rail_side] = [point.asdict() for point in poly3d_filtered.frames[frame_nb].annotations[annotation].points]
-
-
         else:
             pass # If the file doesn't exist, no label point exist, we keep the segment filled with ignore_index
         
         # Create dict with for each point the coordinates, strength (intensity), segment (label) 
-        data_dict = dict(coord=coord, strength=strength, segment=segment, instance=instances, person_pose=segment_person_status, scene=float(str(scene_path).rsplit("_",1)[1]), frame=frame_nb) # TODO if not used, remove the last two args.
+        data_dict = dict(coord=coord, strength=strength, segment=segment, instance=instances.astype(int), person_pose=segment_person_status, scene=float(str(scene_path).rsplit("_",1)[1]), frame=frame_nb) 
 
-        if self.return_track_poly3d:
-            return data_dict, dict_track
-        else:
-            return data_dict
+        return data_dict
 
     # --- PREprocessed ---
     def get_data_preprocessed(self, idx): 
@@ -240,18 +224,18 @@ class OSDaR23Dataset(DefaultDataset):
         data_dict = self.get_data(idx)
 
         if transforms_list is not None:
-            data_dict["add_samples_transform"] = transforms_list # Add to the data dicrtionary the list of transforms which needs to be applied on this transform.
+            data_dict["add_samples_transform"] = transforms_list # Add to the data dictionary the list of transforms which needs to be applied on this transform.
         else:
             data_dict["add_samples_transform"] = []
 
         # Only load second point cloud if required in transform process
         if ("PolarMixPaste" in [type(transform).__name__ for transform in self.transform.transforms]) or \
             ("PolarMixSwap" in [type(transform).__name__ for transform in self.transform.transforms]):
-            #data_dict2 = self.get_data(np.random.randint(len(self.data_list)))
-            data_dict2 = self.get_data(np.random.choice(self.person_data_idx)) # Actively select only scene which have persons in it for copy pasting
-            data_dict2 = {k+"_2": v for k, v in data_dict2.items()}
-            data_dict2["instance_2"] = data_dict2["instance_2"] + data_dict["instance"].max() # We want each instance to be individual, even between the two pcds
-            data_dict = {**data_dict, **data_dict2}
+
+            data_dictB = self.get_data(np.random.choice(self.person_data_idx)) # Actively select only scene which have persons in it for copy pasting
+            data_dictB = {k+"_B": v for k, v in data_dictB.items()}
+            data_dictB["instance_B"] = data_dictB["instance_B"] + data_dict["instance"].max() # We want each instance to be individual, even between the two pcds
+            data_dict = {**data_dict, **data_dictB}
             
         data_dict["pasting_successful"] = -1 # Add value to avoid issue in "Collect"
         data_dict = self.transform(data_dict)
@@ -302,60 +286,16 @@ class OSDaR23Dataset(DefaultDataset):
         else:
             sys.exit(f"Error: idx should only be of type 'int' or 'tuple', but received: {type(idx)}.")
 
-
         if self.test_mode:
             return self.prepare_test_data(idx) # The test loader doesn't need any transformation list
         else:
             return self.prepare_train_data(idx, transform_list)
 
 
-class CustomSampler(Sampler):
-    #TODO The augmented sampler does the same thing if no augmentation are applied. This could be removed.
-    """Goal of this sampler is to force the batch to have at most ONE frame of either scene 20.1 or 12.1. Due to the large presence of vegetation in scene, 
-        even after grid sampling, there is a large number of point in the sample"""
-    def __init__(self, data, batch_size, augmentations=1):
-        self.data = data
-        self.dataset_size = data.__len__()
-        self.batch_size = batch_size
-        self.augmentations = augmentations
-        # Getting the index for both problematic scenes
-        self.scene_20_1_idx = [ind  for ind, string in enumerate(data.__dict__["data_list"]) if ("20_vegetation_squirrel_20.1" in string)]
-        self.scene_12_1_idx = [ind  for ind, string in enumerate(data.__dict__["data_list"]) if ("12_vegetation_steady_12.1" in string)]
-        self.non_prob_indices = [x for x in list(range(self.dataset_size)) if (x not in self.scene_20_1_idx) and (x not in self.scene_12_1_idx)]
-
-    
-    def shuffle_indices(self):
-        # Create list of indices by starting the batch with the problematic pcd and completing it with non problematic pcd. Once all problematic
-        # pcd have been seen, complete with the remaining indices. Note: this method is currently developed specifically for batch size of 2.
-        indices = []
-        non_prob_indices = copy.copy(self.non_prob_indices)
-        
-        for data_augment in range(self.augmentations): # Reshuffle and append as many time as desired
-            random.shuffle(non_prob_indices) 
-            
-            i = 0
-            for prob_idx in self.scene_12_1_idx+self.scene_20_1_idx:
-                indices.append(prob_idx)
-                indices.extend(non_prob_indices[i:i+self.batch_size-1])
-                i += self.batch_size-1
-
-            indices.extend(non_prob_indices[i:])
-        return(indices)
-    
-    def __iter__(self):
-        
-        self.indices = self.shuffle_indices()
-
-        return iter(self.indices)
-
-    def __len__(self):
-        return self.dataset_size
-
-
 class AugmentedSampler(Sampler):
     """ Goal is to create additional samples seen during one epoch. The sample are artificially created by applying transform on existing data samples
         Instead of only returning the indice of the data to select, it gives a tuple containing the index AND the list of transforms that must be applied to it
-        It also force the batches to have at most ONE frame of either scene 20.1 or 12.1. Due to the large presence of vegetation in scene, 
+        It also forces the batches to have at most ONE frame of either scene 20.1 or 12.1. Due to the large presence of vegetation in scene, 
         even after grid sampling, there is a large number of point in the sample."""
     def __init__(self, data, cfg):
         # transform_list: list of dictionary containing the 
@@ -398,20 +338,19 @@ class AugmentedSampler(Sampler):
         indices = original_dataset_indices
 
         for augmentation in self.augmentations_list:
-            if ("start_epoch" not in augmentation.keys()) or (("start_epoch" in augmentation.keys()) and (self.epoch>=augmentation["start_epoch"])):
-                self.verify_transforms_existence(augmentation["type"])
-                #if (augmentation["augment_ratio"]>0) or (self.cfg.sweep): #TODO Look whether I want to leave this function in there (allow to launch a transformation after a certain number of epoch, without augmenting)
-                augmented_indices = self.create_transformed_samples(original_dataset_indices, augmentation["augment_ratio"], augmentation["type"] )
-                indices = indices + augmented_indices
-                #else:
-                    #indices = [(x[0], x[1]+augmentation["type"]) for x in indices]
+            
+            self.verify_transforms_existence(augmentation["type"])
+            
+            augmented_indices = self.create_transformed_samples(original_dataset_indices, augmentation["augment_ratio"], augmentation["type"] )
+            indices = indices + augmented_indices
+                
 
         indices = self.shuffle_by_batch(indices, self.batch_size)
 
         if len(indices)!=self.__len__():
             sys.exit(f"Error: The length of the indices should match with the precomputed amount of samples in __len__(). Got {len(indices)} for len(indices) and {self.__len__()} for self.__len__().")
 
-        print(f"{bcolors.OKCYAN}IMPORTANT INFO{bcolors.ENDC}: Original dataset size {self.dataset_size}, with batch_size {self.batch_size} and transform = {self.augmentations_list}. \nPredicted {self.__len__()} samples, and created list of indices of size {len(indices)}")
+        print(f"{bcolors.OKCYAN}AUGMENTED SAMPLER{bcolors.ENDC}: Original dataset size {self.dataset_size}, with batch_size {self.batch_size} and transform = {self.augmentations_list} -> {len(indices)} samples.")
         return(indices)
     
     def create_transformed_samples(self, original_indices, augment_ratio, transforms_list):
@@ -487,17 +426,8 @@ class AugmentedSampler(Sampler):
         nb_added_samples = 0
 
         for augmentation in self.augmentations_list:
-            if ("start_epoch" not in augmentation.keys()) or (("start_epoch" in augmentation.keys()) and (epoch>=augmentation["start_epoch"])):
-                
-                # added_samples = int(self.drop_last_dataset_size*augmentation["augment_ratio"])
-                # batch_constrained_added_samples = added_samples - added_samples%self.batch_size # Because the added sample are randomly in batches, need to be taken into account
-                # nb_added_samples += batch_constrained_added_samples
-
-                # Compute the number of samples which will be produced by augmentation, following same logic as in create_transformed_samples
-                nb_added_samples += int(int(self.drop_last_dataset_size/self.batch_size)*augmentation["augment_ratio"])*self.batch_size
-
-            if ("start_epoch" in augmentation.keys()) and (epoch>=augmentation["start_epoch"]):
-                print(f"{bcolors.WARNING}WARNING{bcolors.ENDC}: Some augmentation are activated only after a certain number of epoch. The handling of this by the scheduler was not precisely tested and unexpected behaviour might occur.")
+            # Compute the number of samples which will be produced by augmentation, following same logic as in create_transformed_samples
+            nb_added_samples += int(int(self.drop_last_dataset_size/self.batch_size)*augmentation["augment_ratio"])*self.batch_size
 
         return self.drop_last_dataset_size+nb_added_samples
 

@@ -42,9 +42,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteract
     libglib2.0-0
 
 
-# TODO: Add requirements.txt with detailed versions
-#RUN python3.8 -m ensurepip --default-pip
-#RUN python3.8 -m pip install --upgrade pip
+
 
 #Pip install of necessary libraries for Pointcept
 

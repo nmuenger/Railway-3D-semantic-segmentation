@@ -1,14 +1,165 @@
-### 3D Semantic Segmentation of Objects in the Railway Context
+## 3D Semantic Segmentation of Objects in the Railway Context
 
-This repository contains the scripts for model implementation and data augmentation utilized in the Master’s project *3D Semantic Segmentation of Objects in the Railway Context*. Please note that the code is currently in its raw form and has not yet been cleaned. This will be adressed in the coming days.
+Codebase for the Master's project *3D Semantic Segmentation of Objects in the Railway Context*.
+
+----
+### Donwloading OSDaR23
+
+The data for each scene from Open Sensor Data for Rail 2023 (OSDaR23) can be downloaded here: https://data.fid-move.de/dataset/osdar23 . We recommend placing the extracter folders for each scene following the structure shown below.
+
+```
+.
+├── README.md
+├── configs
+├── data
+│   └── OSDaR23_dataset
+│       ├── 1_calibration_1.1
+│       │   ├── ir_center
+│       │   ├── lidar
+│       │   └── ...
+│       ├── 1_calibration_1.2
+│       ├── ...
+│       └── 21_station_wedel_21.3
+└── ...
+```
+
+----
+### Preprocessing dataset for OSDaR23
+To make the training faster with OSDaR23, one can use the preprocessed data, which is obtained with `misc/preprocess_pcd.py`. With this, the semantic attribute is added to each point, and the point clouds are saved in binary format, making the training procedure faster. We recommend exporting those under a folder called OSDaR23_dataset_preprocessed, as shown by the structure below. The training can also be done with non-preprocessed data. Note that some functions, such as the projection of point cloud in image frame requires the entire raw dataset.
+
+```
+.
+├── README.md
+├── configs
+├── data
+│   ├── OSDaR23_dataset
+│   │   ├── 1_calibration_1.1
+│   │   └── ...
+|   |
+│   └── OSDaR23_dataset_preprocessed
+│       ├── 1_calibration_1.1
+│       │   ├── 012_1631441453.299504000.pcd.bin
+│       │   └── ...
+│       └── ...
+└── ...
+```
+
+------
+
+### Training 
+**Train from scratch.** The training process is based on configs in `configs` folder. 
+The training script will generate an experiment folder in `exp` folder and backup essential code in the experiment folder. The training metric and validation results are saved to Weight and Biases.
+```bash
+export PYTHONPATH=./
+python tools/train.py --config-file ${CONFIG_PATH} --num-gpus ${NUM_GPU} --options save_path=${SAVE_PATH}
+```
+
+For example, to train the model with OSDaR23:
+```bash
+export PYTHONPATH=./
+python tools/train.py --config-file configs/osdar23/OSDaR23.py --options save_path=exp/osdar_training
+```
+**Resume training from checkpoint.** If the training process is interrupted by accident, the following script can resume training from a given checkpoint.
+```bash
+export PYTHONPATH=./
+python tools/train.py --config-file ${CONFIG_PATH} --num-gpus ${NUM_GPU} --options save_path=${SAVE_PATH} resume=True weight=${CHECKPOINT_PATH}
+```
+
+To run a Weight and Biases sweep during training, `sweep = True` must be added to the options on launch. The configuration parameters which should be modified by the sweep must be carefully set in *train.py*.
+
+Adding `eval_only=True` to the options arguments skips all the training steps and only runs the evaluator on the scenes set in the validation split. To run evaluation on the Test set, replace accordingly in the config file the field `val` with the test set.
+```python
+split2seq = dict(
+            train=["1_calibration_1.2",...],
+            #val=["2_station_berliner_tor_2.1",...],
+            val=["1_calibration_1.1",...],
+            test=["1_calibration_1.1",...],
+        )
+```
+
+-----
+
+### Run inference
+The script *misc/predict_segmentation.py* is used for running the inference process on one or multiple point cloud and export them for visualisation. The model and data paths need to be set in the yaml file.
+```bash
+export PYTHONPATH=./
+python misc/predict_segmentation.py -cfg misc/inference_configs/inference_cfg.yml
+```
+The scripts can return the inference in two different ways:<br>
+**.las point cloud:** <br>
+In which case the Ground Truth segmentation is saved under the "Classification" field, and the predicted segmentation under the "User Data" field. The field "Withheld annotation" is used to indicate points where the inference varies from the ground truth. <br>
+**projection in image frame:** <br>
+(This only works with data coming from OSDaR23)
+In that case, the point cloud is projected inside the image frame of the RGB high-res center camera. Two images are generated per point cloud, one for the ground truth, one for the inference.
+![Example projected point cloud](./docs/4_station_pedestrian_bridge_4.4_frame_100_pred.jpeg "Example of a projected point cloud.")
+
+-----
+### Data augmentation
+Two data augmentation were added in this project: tracks sparsification and person instances pasting. They are defined in *pointcept/datasets/transform.py*, under the name *Sparsify* and *PolarMixPaste* respectively.
+#### On the fly:
+To apply the  data augmentations on-the-fly, those must be set in the config file, for example:
+
+```python 
+data = dict(
+    ...
+    train=dict(
+        ...
+        transform=[
+           dict(type="Sparsify", end_range=50, track_label=learning_map["track"], p=0.9)]
+              )
+           )
+
+```
+
+#### Offline:
+The data augmentation can also operate by actively creating new samples on top of the existing ones, with the augmentation applied on it. 
+
+For this to work, one must indicate in the config file, for the *augmented_sampler*, which augmentation should be applied, and with which probability. 
+Example of some configs, and in what they would result for a dataset of size 100.
+
+```python 
+augmented_sampler = dict(active = True,
+                         augmentations_list = [dict(type=["PolarMixPaste"], 
+                                                    augment_ratio=0.8)])
+
+train=dict(
+            ...
+            transform=[dict(type="PolarMixPaste", 
+                             p=.0, ...),
+                        ...],
+            ...
+            ),
+```
+&rarr; Would result in 100 samples without the PolarMixPaste augmentation applied, plus 80 samples where PolarMixPaste would be applied on each.
+
+```python 
+augmented_sampler = dict(active = True,
+                         augmentations_list = [dict(type=["PolarMixPaste"], 
+                                                    augment_ratio=0.4),
+                                               dict(type=["Sparsify"], 
+                                                    augment_ratio=0.2,)])
+
+train=dict(
+            ...
+            transform=[dict(type="PolarMixPaste", 
+                             p=0.8, ...),
+                        dict(type="Sparsify", 
+                             p=0.5, ...)],
+            ...
+            ),
+```
+&rarr; Would result in 100 samples where the PolarMixPaste would be applied at 80% probability and Sparsify at 50% probability, plus 40 samples with the PolarMixPaste augmentation applied on each, plus 20 samples with the Sparsify augmentation applied on each
+
+For the PolarMixPaste augmentation, two dataframes are used. They are saved under `misc/csv_stats`. The notebook used to generate those is `misc/generate_csv_files.ipynb`.
+
+----
+### Devcontainer setup
+To use the devcontainer setup, first build the image from the Dockerfile. Then replace in `.devcontainer/devcontainer.json` the field *image* with the one you built.
+The `requirements.txt` can be used to get the exact version of libraries.
 
 
-<p align="center">
-    <img src="https://github.com/nmuenger/Railway-3D-semantic-segmentation/blob/master/Inference_train_station.jpeg" alt="trainstation" width="500"/>
-</p>
 
-
-#### Below, rest of the original pointcept README
+#### Below, rest of the original network's README
 ----
 <p align="center">
     <!-- pypi-strip -->

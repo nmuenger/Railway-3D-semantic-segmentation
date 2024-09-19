@@ -1,0 +1,22 @@
+OSDaR_data: True # Some function (e.g. the projection of the pcd in image frame) do not work with other data source.
+weight_path: "exp/final_weights/DSD_40-50_p_0_9/model/model_last.pth" 
+
+config_path: configs/osdar23/OSDaR23.py 
+data_path: data/OSDaR23_dataset # Note that this must be the non-preprocessed data folder
+
+
+run_all_val_set: False # If True, will run inference on each frame of the validation set. Else, it only runs on frame specifically defined in "evaluated_frames"
+val_set: ["2_station_berliner_tor_2.1","3_fire_site_3.4","4_station_pedestrian_bridge_4.2","4_station_pedestrian_bridge_4.5","6_station_klein_flottbek_6.1","7_approach_underground_station_7.2","9_station_ruebenkamp_9.3","9_station_ruebenkamp_9.4","9_station_ruebenkamp_9.5","9_station_ruebenkamp_9.7","11_main_station_11.1","14_signals_station_14.2","14_signals_station_14.3","18_vegetation_switch_18.1","21_station_wedel_21.3"]
+
+evaluated_frames: ["2_station_berliner_tor_2.1/lidar/250_1631531385.099957000.pcd",
+                    "4_station_pedestrian_bridge_4.4/lidar/199_1631704353.999993000.pcd"]
+
+
+# General directory for where exported file will be stored.
+out_path: "exp/debug_inference_3" 
+
+export_las_file: True # If set to true, will export the infered pcd under "out_path"
+export_projected_pcd: True
+
+
+

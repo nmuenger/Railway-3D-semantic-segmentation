@@ -1,0 +1,17 @@
+OSDaR_data: False 
+weight_path: "/workspaces/baseline/exp/final_weights/DSD_40-50_p_0_9/model/model_last.pth" 
+
+config_path: /workspaces/baseline/configs/osdar23/OSDaR23.py
+data_path: /workspaces/baseline/data/SIEMENS
+
+
+run_all_val_set: False # If True, will run inference on each frame of the validation set. Else, it only runs on frame specifically defined in "evaluated_frames"
+
+evaluated_frames: ["od_recording_2022_05_05-11_37_57_converted/point_clouds/lidar_horizon/000000.pcd",
+                    od_recording_2022_05_05-11_37_57_converted/point_clouds/lidar_horizon/000001.pcd]
+
+# General directory for where exported file will be stored.
+out_path: "/workspaces/baseline/exp/inference_siemens_data"
+
+export_las_file: True # If set to true, will export the infered pcd under "out_path"
+export_projected_pcd: False

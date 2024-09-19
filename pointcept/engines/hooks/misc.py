@@ -40,7 +40,7 @@ class IterationTimer(HookBase):
     def before_train(self):
         self._start_time = time.perf_counter()
         if type(self.trainer.train_loader.sampler).__name__!="AugmentedSampler":
-            self._remain_iter = self.trainer.max_epoch * len(self.trainer.train_loader) * self.trainer.augment_dataset_size
+            self._remain_iter = self.trainer.max_epoch * len(self.trainer.train_loader) 
         else:
             self._remain_iter = self.trainer.train_loader.sampler.get_total_steps(self.trainer.max_epoch)
     
@@ -102,12 +102,11 @@ class InformationWriter(HookBase):
         #     batch_size=len(self.trainer.comm_info["input_dict"]["offset"]),
         #     points_num=self.trainer.comm_info["input_dict"]["offset"][-1]
         # )
-        info = "Train: [{epoch}/{max_epoch}][{iter}/{max_iter}(*{augment})] ".format(
+        info = "Train: [{epoch}/{max_epoch}][{iter}/{max_iter}] ".format(
             epoch=self.trainer.epoch + 1,
             max_epoch=self.trainer.max_epoch,
             iter=self.trainer.comm_info["iter"] + 1,
             max_iter=len(self.trainer.train_loader),
-            augment=self.trainer.augment_dataset_size
         )
         self.trainer.comm_info["iter_info"] += info
 
@@ -515,7 +514,6 @@ class CUDAMemoryConsumption(HookBase):
         if mem_reserved_gb > self.largest_memory_reserved:
             self.largest_memory_reserved = mem_reserved_gb
 
-        print(f"DEBUGINFO: Current batch iter {self.curr_iter+1}. Memory allocated/reserved: [{round(mem_allocated_gb,2)},{round(mem_reserved_gb,2)}] GB.")
 
 @HOOKS.register_module()
 class SuccessfulPastingCounter(HookBase):

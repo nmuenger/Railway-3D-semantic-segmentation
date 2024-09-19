@@ -2,6 +2,7 @@
 Main Training Script
 
 Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
+Modified: Nicolas Muenger
 Please cite our work if the code is helpful to you.
 """
 
@@ -12,6 +13,7 @@ from pointcept.engines.defaults import (
 )
 from pointcept.engines.train import TRAINERS
 from pointcept.engines.launch import launch
+import os
 import wandb
 
 def main_worker(cfg):
@@ -20,30 +22,28 @@ def main_worker(cfg):
     trainer.train()
 
 def set_cfg_and_launch(args):
+    sweep_cfg = None
     if "sweep" in args.options:
-        wandb.init(project="sweep")
+        wandb.init(project="new_sweep_set_sparse_restrained_50")
         sweep_cfg = wandb.config
-        # Overwrite here the parameters provided in the config file by using the exact same structure and the sweep value
-        args.options["augmented_sampler"]=dict(active = True,
-                                            augmentations_list = [dict(type=["PolarMixPaste"], augment_ratio=sweep_cfg.augmentation_1_ratio),                          
-                                                #dict(type=["SparsifyTrackIgnore"], augment_ratio=0.2),
-                                                #dict(type=["PolarMixPaste", "SparsifyTrackIgnore"], augment_ratio=0.4)
-                                                ])
-        default_lr = sweep_cfg.default_lr
-        attention_lr = default_lr/10
-        args.options["optimizer"] = dict(type="AdamW", lr=default_lr, weight_decay=0.005)
-        args.options["scheduler"] = dict(
-            type="OneCycleLR",
-            max_lr=[default_lr, attention_lr],
-            pct_start=0.04,
-            anneal_strategy="cos",
-            div_factor=10.0,
-            final_div_factor=100.0,
-        )
-        args.options["param_dicts"] = [dict(keyword="block", lr=attention_lr)]
-        args.options["save_path"] = "exp/"+"sweep_lr_"+str(sweep_cfg.default_lr)+"_augment_ratio_"+str(sweep_cfg.augmentation_1_ratio)
+       
+        # Update save path so as to not overwrite
+        args.options["save_path"] = "exp/sweep_paste_"+str(sweep_cfg.prob_augmentation_paste)+\
+                                        "_sparse_"+str(sweep_cfg.prob_augmentation_sparse)
 
     cfg = default_config_parser(args.config_file, args.options)
+    
+    if sweep_cfg is not None:
+        for i in range(len(cfg.data.train.transform)):
+            if cfg.data.train.transform[i]["type"] == "PolarMixPaste":
+                cfg.data.train.transform[i]["p"]=sweep_cfg.prob_augmentation_paste # Update probability of applying augmentation on the fly
+                print("Modified paste transform with prob:", cfg.data.train.transform[i]["p"])
+
+            if cfg.data.train.transform[i]["type"] == "Sparsify":
+                cfg.data.train.transform[i]["p"]=sweep_cfg.prob_augmentation_sparse 
+                print("Modified sparse transform with prob:", cfg.data.train.transform[i]["p"])
+
+    cfg.dump(os.path.join(cfg.save_path, "config.py")) #Re-dump the config, with the updated values
 
     launch(
         main_worker,
@@ -57,22 +57,21 @@ def set_cfg_and_launch(args):
 def main():
     args = default_argument_parser().parse_args()
     
-    # To activate the sweep mode add --options sweep=True to your launch command
-    # Define below the parameters that must be tested during the sweep. The must then be properly updated in the
+    # To activate the sweep mode, add --options sweep=True to your launch command
+    # Define below the parameters that must be tested during the sweep. They must then be properly updated in the
     # config in the function set_cfg_and_launch()
     if "sweep" in args.options:
         sweep_configuration = {
                                 "method": "grid",
                                 "metric": {"goal": "minimize", "name": "val/total/mIoU"},
                                 "parameters": {
-                                                "augmentation_1_ratio": {"values":[0.6,0.7,0.8,0.9,1]},
-                                                "default_lr": {"values":[0.001]},
+                                                "prob_augmentation_paste": {"values":[0, 0.5, 1.0]},
+                                                "prob_augmentation_sparse": {"values":[0, 0.5, 1.0]}
                                 },
                             }
         
         sweep_id = wandb.sweep(sweep=sweep_configuration, project="sweep")
         wandb.agent(sweep_id, function=lambda: set_cfg_and_launch(args))
-    
     else:
         set_cfg_and_launch(args)
 

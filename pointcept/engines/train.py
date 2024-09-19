@@ -17,7 +17,6 @@ from functools import partial
 import torch.distributed as dist
 from pointcept.utils.misc import intersection_and_union_gpu
 import numpy as np
-import pickle
 
 if sys.version_info >= (3, 10):
     from collections.abc import Iterator
@@ -35,7 +34,7 @@ from pointcept.utils.optimizer import build_optimizer
 from pointcept.utils.scheduler import build_scheduler
 from pointcept.utils.events import EventStorage
 from pointcept.utils.registry import Registry
-from pointcept.datasets.osdar23 import CustomSampler, AugmentedSampler
+from pointcept.datasets.osdar23 import AugmentedSampler
 
 TRAINERS = Registry("trainers")
 
@@ -106,8 +105,10 @@ class TrainerBase:
         for h in self.hooks:
             h.after_step()
 
-    def after_epoch(self):
+    def after_epoch(self, eval_only=False):
         for h in self.hooks:
+            if type(h).__name__=="CheckpointSaver" and eval_only:
+                continue
             h.after_epoch()
         self.storage.reset_histories()
 
@@ -128,7 +129,6 @@ class Trainer(TrainerBase):
         self.epoch = 0
         self.start_epoch = 0
         self.max_epoch = cfg.eval_epoch
-        self.augment_dataset_size = cfg.augment_dataset_size
         self.best_metric_value = -torch.inf
         self.logger = get_root_logger(
             log_file=os.path.join(cfg.save_path, "train.log"),
@@ -160,26 +160,27 @@ class Trainer(TrainerBase):
             self.before_train()
             self.logger.info(">>>>>>>>>>>>>>>> Start Training >>>>>>>>>>>>>>>>")
             for self.epoch in range(self.start_epoch, self.max_epoch):
-                # => before epoch
-                # TODO: optimize to iteration based
-                if (comm.get_world_size() > 1) or (type(self.train_loader.sampler).__name__ == "AugmentedSampler"):
-                    self.train_loader.sampler.set_epoch(self.epoch)
-                self.model.train()
-                self.data_iterator = enumerate(self.train_loader)
-                self.before_epoch()
-                # => run_epoch
-                for (
-                    self.comm_info["iter"],
-                    self.comm_info["input_dict"],
-                ) in self.data_iterator:
-                    # => before_step
-                    self.before_step()
-                    # => run_step
-                    self.run_step()
-                    # => after_step
-                    self.after_step()
+                if self.cfg.eval_only == False:
+                    # => before epoch
+                    # TODO: optimize to iteration based
+                    if (comm.get_world_size() > 1) or (type(self.train_loader.sampler).__name__ == "AugmentedSampler"):
+                        self.train_loader.sampler.set_epoch(self.epoch)
+                    self.model.train()
+                    self.data_iterator = enumerate(self.train_loader)
+                    self.before_epoch()
+                    # => run_epoch
+                    for (
+                        self.comm_info["iter"],
+                        self.comm_info["input_dict"],
+                    ) in self.data_iterator:
+                        # => before_step
+                        self.before_step()
+                        # => run_step
+                        self.run_step()
+                        # => after_step
+                        self.after_step()
                 # => after epoch
-                self.after_epoch()
+                self.after_epoch(eval_only=self.cfg.eval_only)
             # => after train
             self.after_train()
 
@@ -188,7 +189,6 @@ class Trainer(TrainerBase):
 
         input_dict = self.comm_info["input_dict"]
     
-        print(f"DEBUGINFO: Iter {self.curr_iter}. The len of feat in input is: {len(input_dict['feat'])}. Scene/frame: [{list(input_dict['scene'].cpu().numpy())}/{list(input_dict['frame'].cpu().numpy())}]") # Dist max-min: {input_dict['coord'].max(axis=0)[0]-input_dict['coord'].min(axis=0)[0]}. Max grid coord: {input_dict['grid_coord'].max(axis=0)[0]}")
         if self.writer is not None:
             self.writer.log({"iter": self.curr_iter, "feature length": len(input_dict['feat'])})
 
@@ -199,7 +199,7 @@ class Trainer(TrainerBase):
             output_dict = self.model(input_dict)
             loss = output_dict["loss"]
             
-            # #----Added by me to upload metric also during training:-----
+            # #----Added to upload metric also during training:-----
             output = output_dict["seg_logits"]
             del output_dict["seg_logits"] # The seg logits was added in output_dict to allow for computation of training mIoU, but needs to be removed for further step.
             pred = output.max(1)[1]
@@ -250,10 +250,6 @@ class Trainer(TrainerBase):
             torch.cuda.empty_cache()
         self.comm_info["model_output_dict"] = output_dict
         
-        # UNCOMMENT FOR PICKLE DUMP HERE
-        # with open(f"exp/pickle_debug_with_output_dict/iter_{self.comm_info['iter']}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pkl", 'wb') as f:  # Python 3: open(..., 'wb')
-        #     pickle.dump([input_dict,self.model.state_dict(),output], f) # Input dict, weigth carachteristic, output = seg_logits
-
     def build_model(self):
         model = build_model(self.cfg.model)
         if self.cfg.sync_bn:
@@ -302,9 +298,6 @@ class Trainer(TrainerBase):
         if comm.get_world_size() > 1:
             self.logger.info(f"Using distributed sampler for training")
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
-        elif self.cfg.specific_osdar23_sampler: #Objective of this is to assign dense pcd with non dense pcd in same batch
-            self.logger.info(f"Using CustomSampler. Specifically create batch mixing dense with non-dense samples.")
-            train_sampler = CustomSampler(train_data,self.cfg.batch_size_per_gpu,augmentations=self.cfg.augment_dataset_size)
         elif self.cfg.augmented_sampler["active"]:
             self.logger.info(f"Using AugmentedSampler. The number of samples seen during one epoch will be larger than the training set size.")
             train_sampler = AugmentedSampler(train_data, self.cfg)
@@ -362,8 +355,8 @@ class Trainer(TrainerBase):
     def build_scheduler(self):
         assert hasattr(self, "optimizer")
         assert hasattr(self, "train_loader")
-        if type(self.train_loader.sampler).__name__!="AugmentedSampler": # TODO might not work if the eval_epoch is not == to total number of epoch
-            self.cfg.scheduler.total_steps = len(self.train_loader) * self.cfg.eval_epoch * self.cfg.augment_dataset_size
+        if type(self.train_loader.sampler).__name__!="AugmentedSampler": 
+            self.cfg.scheduler.total_steps = len(self.train_loader) * self.cfg.eval_epoch
         else:
             if self.cfg.epoch!=self.cfg.eval_epoch:
                 sys.exit(f"Error: The total number of epoch is not equal to number of eval epoch. This behaviour is currently not supported for the AugmentedSampler...")

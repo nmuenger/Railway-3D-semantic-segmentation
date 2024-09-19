@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import copy
 from collections.abc import Sequence, Mapping
-from railseg.pcd_processing import pcd_to_las
+from misc.pcd_processing import pcd_to_las
 import os
 import pandas as pd
 
@@ -475,7 +475,7 @@ class RandomColorJitter(object):
         value, name, center=1, bound=(0, float("inf")), clip_first_on_zero=True
     ):
         if isinstance(value, numbers.Number):
-            if value < 0:
+            if value < 0: 
                 raise ValueError(
                     "If {} is a single number, it must be non negative.".format(name)
                 )
@@ -1142,10 +1142,11 @@ class InstanceParser(object):
 
 @TRANSFORMS.register_module()
 class PolarMixSwap(object): # Code inspired from : https://github.com/xiaoaoran/polarmix
+    """This augmentation applies the "swap" method explained in the PolarMix paper. 
+    It was not used in the final methodology."""
     def __init__(self, p=0.5):
         self.p_swap = p
         
-
     def __call__(self, data_dict):
         if (np.random.random() < self.p_swap) or (self.__class__.__name__ in data_dict["add_samples_transform"]):
             data_dict = self.swap(data_dict)
@@ -1155,7 +1156,7 @@ class PolarMixSwap(object): # Code inspired from : https://github.com/xiaoaoran/
     def swap(self, data_dict):
         # calculate horizontal angle for each point
         yaw1 = -np.arctan2(data_dict["coord"][:, 1], data_dict["coord"][:, 0])
-        yaw2 = -np.arctan2(data_dict["coord_2"][:, 1], data_dict["coord_2"][:, 0])
+        yaw2 = -np.arctan2(data_dict["coord_B"][:, 1], data_dict["coord_B"][:, 0])
         
         start_angle = np.random.uniform(-np.pi/4, 0)
         end_angle = start_angle+np.pi/4
@@ -1168,13 +1169,17 @@ class PolarMixSwap(object): # Code inspired from : https://github.com/xiaoaoran/
         for key in ["coord", "strength", "segment", "instance"]:
             if key in data_dict.keys():
                 data_dict[key] = np.delete(data_dict[key], idx1, axis=0)
-                data_dict[key] = np.concatenate((data_dict[key], data_dict[key+"_2"][idx2]))
+                data_dict[key] = np.concatenate((data_dict[key], data_dict[key+"_B"][idx2]))
 
         return(data_dict)
     
 @TRANSFORMS.register_module()
 class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran/polarmix
-    def __init__(self, p=1, no_ground_pasting=True, apply_rotation=True, flip_prob=0.5, horizontal_shift=True, shift_range = [2,2], put_to_back_prob=True, max_push_dist=220, csv_stat_path=None):
+    """Transformation for the methodology described in section 4.2 of the report.
+    Given a scan A and a scan B, it paste the 'person' instances of scan B in scan A, so as to create new scene setup."""
+    def __init__(self, p=1, no_ground_pasting=True, apply_rotation=True, flip_prob=0.5, 
+                 horizontal_shift=True, shift_range = [2,2], put_to_back_prob=1, max_push_dist=220, csv_stat_path=None,
+                 person_label=1, track_label=4):
         self.p = p
         self.iter = 0
         self.no_ground_pasting = no_ground_pasting # If this condition is true, will paste person even if there are no point under it in scene 1
@@ -1186,11 +1191,13 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
         self.shift_range = shift_range              # [max_shift_x, max_shift_y]-> shift taken between [-max_shift_x, max_shift_x]
         self.put_to_back_prob = put_to_back_prob    # Whether the instance should be pushed furhter away from the snesor (in x)
         self.max_push_dist = max_push_dist          # Max x value for pedestrian position
+        self.person_label = person_label
+        self.track_label = track_label
 
         self.counter_successful_pasting = 0
         self.counter_function_call = 0
 
-        self.STAT_BUCKET_SIZE = 5 # in meter
+        self.STAT_BUCKET_SIZE = 5 # in meter, the size of the bins used for computing average density
         self.create_person_density_stat(csv_stat_path)
 
     def create_person_density_stat(self, csv_stat_path):
@@ -1202,12 +1209,7 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
         # -> fill bucket with preceding bucket value if N.A.
         self.df_person = training_df.groupby(pd.cut(training_df["dist"], bucket_ranges, labels=bucket_ranges[:-1]))["nb_points"].mean().reset_index().fillna(method="ffill")
 
-
-
-
     def __call__(self, data_dict):
-        """Goal of this function is to copy paste the 'person' segmentation of a second point cloud inside the first,
-            The person should then be on the ground"""
         self.iter+=1
         self.counter_function_call += 1 
         if (np.random.random() < self.p) or (self.__class__.__name__ in data_dict["add_samples_transform"]): #Second condition occur when the dataset size was artificialy augmented
@@ -1216,61 +1218,60 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
         return data_dict
     
     def instance_copy(self, data_dict):
-        found_element_to_copy = False
-        #os.makedirs(f"/workspaces/baseline/exp/temporary_export/pcd_copy_paste/iter_{self.iter}",exist_ok=True)
-        #pcd_to_las(data_dict["coord"],f"/workspaces/baseline/exp/temporary_export/pcd_copy_paste/iter_{self.iter}/pcd_1_{data_dict['scene']}_{data_dict['frame']}.las", data_dict['segment'])
+        # If an export_pcd_folder is provided, save the pcd after each step for visualisation purpose
         
-        PERSON_LABEL = 1
-        TRACK_LABEL = 4 
+        found_element_to_copy = False #Boolean indicating whether an instance was properly pasted in the scene
+       
         MAX_HEIGHT_PLATFORM = 1.5
         
-        #pcd_to_las(data_dict["coord_2"],f"/workspaces/baseline/exp/temporary_export/pcd_copy_paste/iter_{self.iter}/pcd_2_{data_dict['scene_2']}_{data_dict['frame_2']}.las", data_dict['segment_2'])
-    
-        pt_idx = np.where(data_dict["segment_2"] == PERSON_LABEL)[0] # All the points in pcd 2 which are "person"
+        pt_idx = np.where(data_dict["segment_B"] == self.person_label)[0] # All the points in pcd 2 which are "person"
 
-        average_track_z_coord = data_dict["coord"][data_dict["segment"]==TRACK_LABEL, 2].mean() # TODO make code more elegant
+        average_track_z_coord = data_dict["coord"][data_dict["segment"]==self.track_label, 2].mean() # Find average height of all tracks points in Scan A
 
-        person_instances = np.unique(data_dict["instance_2"][pt_idx]) # Retrieving all the instance label for "person"
+        person_instances = np.unique(data_dict["instance_B"][pt_idx]) # Retrieving all the instance label for "person"
         final_pt_idx = []
         for i in person_instances:
-            instance_pt_idx = np.where(data_dict["instance_2"]==i)[0] # Pts index for one person segmentation
+            instance_pt_idx = np.where(data_dict["instance_B"]==i)[0] # Pts index for one person segmentation
 
+            #------Step 1, flipping along the X axis------------------------------------
             if np.random.random() < self.flip_prob:
-                data_dict["coord_2"][instance_pt_idx, 1] = -data_dict["coord_2"][instance_pt_idx, 1] # Flip instance around x instance
-
+                data_dict["coord_B"][instance_pt_idx, 1] = -data_dict["coord_B"][instance_pt_idx, 1] # Flip instance around x instance
+                
+            #------Step 2, rotation around the instance's center along the Z axis-------
             if self.apply_rotation:
-                transform_dict = {"coord":data_dict["coord_2"][instance_pt_idx]} # Create temporary dict to apply transform
+                transform_dict = {"coord":data_dict["coord_B"][instance_pt_idx]} # Create temporary dict to apply transform
                 rotated_dict = self.random_rotate(transform_dict) # Rotate the person instance around its center coordinate
-                data_dict["coord_2"][instance_pt_idx] = rotated_dict["coord"]
-            
+                data_dict["coord_B"][instance_pt_idx] = rotated_dict["coord"]
+                
+            #-------Step 3, shift along the Y axis--------------------------------------
             if self.horizontal_shift: # Apply random shift in x and y in the defined range
-                data_dict["coord_2"][instance_pt_idx, 0] += np.random.uniform(-self.shift_range[0], self.shift_range[0])
-                data_dict["coord_2"][instance_pt_idx, 1] += np.random.uniform(-self.shift_range[1], self.shift_range[1])
-            
-        
+                data_dict["coord_B"][instance_pt_idx, 1] += np.random.uniform(-self.shift_range[1], self.shift_range[1])
+                
+            #-------Step 4, shift towards the back of the scene--------------------------
             if np.random.random() < self.put_to_back_prob: # Shift TO THE BACK the instance, we can easily dedensify instance, but not easily make denser
-                data_dict["coord_2"][instance_pt_idx, 0] += np.random.uniform(0, self.max_push_dist-data_dict["coord_2"][instance_pt_idx, 0].mean()) # Shift x coordinate
-                nb_pts_inst = len(data_dict["coord_2"][instance_pt_idx])
-                x_min, y_min, _ = np.min(data_dict["coord_2"][instance_pt_idx], axis=0) # Find area under instance with ALL the points, not only sparsified
-                x_max, y_max, _ = np.max(data_dict["coord_2"][instance_pt_idx], axis=0)
+                data_dict["coord_B"][instance_pt_idx, 0] += np.random.uniform(0, self.max_push_dist-data_dict["coord_B"][instance_pt_idx, 0].mean()) # Shift x coordinate
+                nb_pts_inst = len(data_dict["coord_B"][instance_pt_idx])
+                x_min, y_min, _ = np.min(data_dict["coord_B"][instance_pt_idx], axis=0) # Find area under instance with ALL the points, not only sparsified
+                x_max, y_max, _ = np.max(data_dict["coord_B"][instance_pt_idx], axis=0)
                 center_x = x_min+(x_max-x_min)/2
                 center_y = y_min+(y_max-y_min)/2
                 center_distance = np.linalg.norm([center_x, center_y])
                 inst_dist_bucket = (center_distance // self.STAT_BUCKET_SIZE) * self.STAT_BUCKET_SIZE # Get value of bucket the instance falls into
                 reduce_to = int(self.df_person[self.df_person["dist"]==inst_dist_bucket]["nb_points"].values[0])
-                # TODO make this step a bit more rigourous
+           
                 reduce_to += np.random.randint(-round(reduce_to*0.1),round(reduce_to*0.1)+1) # Augment/reduce expected number of points at max by 10% of what is expected
-                z_min = data_dict["coord_2"][instance_pt_idx, 2].min()
+                z_min = data_dict["coord_B"][instance_pt_idx, 2].min()
                 if nb_pts_inst>reduce_to: # Ensure that there are enough point in instance to actually remove the number we want to 
                     instance_pt_idx = np.random.choice(instance_pt_idx, reduce_to, replace=False)
                 else:
                     pass
-                
-            else: # If did not go through previous add-on transform
-                x_min, y_min, _ = np.min(data_dict["coord_2"][instance_pt_idx], axis=0)
-                x_max, y_max, _ = np.max(data_dict["coord_2"][instance_pt_idx], axis=0)
-                z_min = data_dict["coord_2"][instance_pt_idx, 2].min()
 
+            else: # If did not go through previous add-on transform
+                x_min, y_min, _ = np.min(data_dict["coord_B"][instance_pt_idx], axis=0)
+                x_max, y_max, _ = np.max(data_dict["coord_B"][instance_pt_idx], axis=0)
+                z_min = data_dict["coord_B"][instance_pt_idx, 2].min()
+
+            #--------Step 5, shift along the Z axis--------------------------------------
             # Retrieving all the points in pcd1 which are below the person in pcd2, so that we can shift accordingly the z position
             pts_below_inst_idx = np.where((data_dict["coord"][:,0]>x_min) & (data_dict["coord"][:,0]<x_max) & (data_dict["coord"][:,1]>y_min) & (data_dict["coord"][:,1]<y_max))[0]
             if len(pts_below_inst_idx)>0: # If no pts, person is in an unrealistic location -> disregard
@@ -1282,7 +1283,7 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
 
             if mean_z_1 < MAX_HEIGHT_PLATFORM: # If mean z is too high disregard as well
                 shift = z_min-mean_z_1
-                data_dict["coord_2"][instance_pt_idx, 2] -= shift
+                data_dict["coord_B"][instance_pt_idx, 2] -= shift
                 final_pt_idx.extend(instance_pt_idx) # Add point idx of non disregarded instance to the list
                 found_element_to_copy = True
             else: # If the pasting would result in unrealistic scene, skip.
@@ -1291,12 +1292,11 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
 
         pt_idx = final_pt_idx
 
-        data_dict["coord"] = np.concatenate((data_dict["coord"], data_dict["coord_2"][pt_idx]))
+        data_dict["coord"] = np.concatenate((data_dict["coord"], data_dict["coord_B"][pt_idx]))
         for key in ["strength", "segment", "instance"]:
             if key in data_dict.keys():
-                data_dict[key] = np.concatenate((data_dict[key], data_dict[key+"_2"][pt_idx]))
+                data_dict[key] = np.concatenate((data_dict[key], data_dict[key+"_B"][pt_idx]))
         
-        #pcd_to_las(data_dict["coord"],f"/workspaces/baseline/exp/temporary_export/pcd_copy_paste/iter_{self.iter}/resulting_pcd_{data_dict['scene']}_{data_dict['frame']}.las", data_dict['segment'])
 
         if found_element_to_copy: # Create boolean to count number augmentation where a pedestrian was indeed pasted.
             data_dict["pasting_successful"] = True
@@ -1315,6 +1315,9 @@ class PolarMixPaste(object): # Code inspired from : https://github.com/xiaoaoran
 
 @TRANSFORMS.register_module()
 class Sparsify(object): # Method inspire by "Part-Aware Data Augmentation for 3D Object Detection in Point Cloud"
+    """Transformation for the methodology described in section 4.1 of the report.
+    Given a point cloud, and the upper bound of the density selection distances, returns the point cloud with
+    sparsified tracks."""
     def __init__(self, end_range=40, track_label=4, p=0.5):
         self.end_range = end_range 
         self.track_label = track_label
@@ -1345,7 +1348,7 @@ class Sparsify(object): # Method inspire by "Part-Aware Data Augmentation for 3D
 
             nb_pts = len(np.where((inst_dist>=end_range-10) & (inst_dist<end_range))[0])
 
-            for up_bucket in np.arange(end_range, -20 , -10): # Sparsify by bucket of 10m 
+            for up_bucket in np.arange(end_range, -10 , -10): # Sparsify by bucket of 10m 
                 evaluated_range_idx = instance_pt_idx[np.where((inst_dist>=up_bucket-10) & (inst_dist<up_bucket))[0]] # Find all point for that instance in that distance range 
                 if len(evaluated_range_idx)<nb_pts: # If there are less points than what we want to have skip
                     continue
@@ -1357,52 +1360,6 @@ class Sparsify(object): # Method inspire by "Part-Aware Data Augmentation for 3D
                 data_dict[key] = np.delete(data_dict[key], idx_to_remove, axis=0)
     
         return data_dict
-    
-@TRANSFORMS.register_module()
-# Method designed to act similarly to the sparsifying, but in that case, putting the dropped track points to the ignore_index value
-class SparsifyTrackIgnore(object): # Method inspired by "Part-Aware Data Augmentation for 3D Object Detection in Point Cloud"
-    def __init__(self, end_range=40, track_label=4, p=0.5, ignore_index=-1):
-        self.end_range = end_range 
-        self.track_label = track_label
-        self.p = p
-        self.ignore_index = ignore_index
-
-    def __call__(self, data_dict):
-        """Goal of this function is to sparsify the track annotations closer to the LiDAR sensor. 
-        It evaluates number of points between [end_range-10 ;end_range] and applies the same density for each bucket of 10m before this."""
-
-        if (np.random.random() < self.p) or (self.__class__.__name__ in data_dict["add_samples_transform"]):
-            data_dict = self.sparsify(data_dict)
-        
-        return data_dict
-
-    def sparsify(self, data_dict):
-        track_points = np.where(data_dict["segment"]==self.track_label)[0] # Find index of points of class "track"
-        track_instances = np.unique(data_dict["instance"][track_points]) # Retrieve the instance number of each track element
-
-        idx_to_remove = []
-        for inst in track_instances: 
-            instance_pt_idx = np.where(data_dict["instance"]==inst)[0]
-            inst_dist = np.linalg.norm(data_dict["coord"][instance_pt_idx, 0:2], axis=1) # For each point of the track instance, get dist to sensor
-
-            if max(inst_dist)< self.end_range:# If there are no point, consider the max distance as the upper bound
-                end_range = max(inst_dist)
-            else:
-                end_range = self.end_range
-
-            nb_pts = len(np.where((inst_dist>=end_range-10) & (inst_dist<end_range))[0])
-
-            for up_bucket in np.arange(end_range, -20 , -10): # Sparsify by bucket of 10m 
-                evaluated_range_idx = instance_pt_idx[np.where((inst_dist>=up_bucket-10) & (inst_dist<up_bucket))[0]] # Find all point for that instance in that distance range 
-                if len(evaluated_range_idx)<nb_pts: # If there are less points than what we want to have skip
-                    continue
-                nb_pts_to_remove = len(evaluated_range_idx)-nb_pts
-                idx_to_remove.extend(np.random.choice(evaluated_range_idx, nb_pts_to_remove, replace=False))
-
-        data_dict["segment"][idx_to_remove] = self.ignore_index #Change point to lable "ignore index"
-
-        return data_dict
-
 
 
 class Compose(object):
@@ -1416,3 +1373,4 @@ class Compose(object):
         for t in self.transforms:
             data_dict = t(data_dict)
         return data_dict
+    
